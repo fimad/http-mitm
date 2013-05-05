@@ -41,10 +41,10 @@ parseResponse = parseHelper responseP
 --------------------------------------------------------------------------------
 
 newlineP :: Parser ()
-newlineP = try (string "\r\n") >> return ()
+newlineP = void $ try (string "\r\n")
 
 spacesP :: Parser ()
-spacesP = many1 (char ' ') >> return ()
+spacesP = void $ many1 (char ' ')
 
 -- | Parse the request header, ignoring the body.
 responseP :: Parser (Response ())
@@ -52,7 +52,7 @@ responseP = do
     status  <-  statusP
     reason  <-  reasonP
     headers <-  headersP
-    return $! Response {
+    return Response {
         rspCode     =   status
     ,   rspReason   =   reason
     ,   rspHeaders  =   headers
@@ -65,7 +65,7 @@ requestP = do
     method  <-  methodP
     uri     <-  uriP
     headers <-  headersP
-    return $! Request {
+    return Request {
         rqURI       =   uri
     ,   rqMethod    =   method
     ,   rqHeaders   =   headers
@@ -101,7 +101,7 @@ methodP =   (helper "HEAD"                  >>  return HEAD)
 -- | Parse the URI resource, and consume till the end of the line
 uriP :: Parser URI
 uriP    =   failIfNothing
-        =<< parseURI
+        =<< parseURIReference
         <$> many (noneOf " ")
         <*  spacesP
         <*  manyTill anyChar newlineP -- parse till the end of line
@@ -123,58 +123,59 @@ headerValueP = manyTill anyChar newlineP
 
 -- | Parses a header name, consuming the colon and leading white space
 headerNameP :: Parser HeaderName
-headerNameP =   (helper "Cache-Control"              >> return HdrCacheControl)
-            <|> (helper "Connection"                 >> return HdrConnection)
-            <|> (helper "Date"                       >> return HdrDate)
-            <|> (helper "Pragma"                     >> return HdrPragma)
-            <|> (helper "Transfer-Encoding"          >> return HdrTransferEncoding)
-            <|> (helper "Upgrade"                    >> return HdrUpgrade)
-            <|> (helper "Via"                        >> return HdrVia)
-            <|> (helper "Accept"                     >> return HdrAccept)
-            <|> (helper "Accept-Charset"             >> return HdrAcceptCharset)
-            <|> (helper "Accept-Encoding"            >> return HdrAcceptEncoding)
-            <|> (helper "Accept-Language"            >> return HdrAcceptLanguage)
-            <|> (helper "Authorization"              >> return HdrAuthorization)
-            <|> (helper "Cookie"                     >> return HdrCookie)
-            <|> (helper "Expect"                     >> return HdrExpect)
-            <|> (helper "From"                       >> return HdrFrom)
-            <|> (helper "Host"                       >> return HdrHost)
-            <|> (helper "If-Modified-Since"          >> return HdrIfModifiedSince)
-            <|> (helper "If-Match"                   >> return HdrIfMatch)
-            <|> (helper "If-None-Match"              >> return HdrIfNoneMatch)
-            <|> (helper "If-Range"                   >> return HdrIfRange)
-            <|> (helper "If-Unmodified-Since"        >> return HdrIfUnmodifiedSince)
-            <|> (helper "Max-Forwards"               >> return HdrMaxForwards)
-            <|> (helper "Proxy-Authorization"        >> return HdrProxyAuthorization)
-            <|> (helper "Range"                      >> return HdrRange)
-            <|> (helper "Referer"                    >> return HdrReferer)
-            <|> (helper "User-Agent"                 >> return HdrUserAgent)
-            <|> (helper "Age"                        >> return HdrAge)
-            <|> (helper "Location"                   >> return HdrLocation)
-            <|> (helper "Proxy-Authenticate"         >> return HdrProxyAuthenticate)
-            <|> (helper "Public"                     >> return HdrPublic)
-            <|> (helper "Retry-After"                >> return HdrRetryAfter)
-            <|> (helper "Server"                     >> return HdrServer)
-            <|> (helper "Set-Cookie"                 >> return HdrSetCookie)
-            <|> (helper "TE"                         >> return HdrTE)
-            <|> (helper "Trailer"                    >> return HdrTrailer)
-            <|> (helper "Vary"                       >> return HdrVary)
-            <|> (helper "Warning"                    >> return HdrWarning)
-            <|> (helper "WWW-Authenticate"           >> return HdrWWWAuthenticate)
-            <|> (helper "Allow"                      >> return HdrAllow)
-            <|> (helper "Content-Base"               >> return HdrContentBase)
-            <|> (helper "Content-Encoding"           >> return HdrContentEncoding)
-            <|> (helper "Content-Language"           >> return HdrContentLanguage)
-            <|> (helper "Content-Length"             >> return HdrContentLength)
-            <|> (helper "Content-Location"           >> return HdrContentLocation)
-            <|> (helper "Content-MD5"                >> return HdrContentMD5)
-            <|> (helper "Content-Range"              >> return HdrContentRange)
-            <|> (helper "Content-Type"               >> return HdrContentType)
-            <|> (helper "ETag"                       >> return HdrETag)
-            <|> (helper "Expires"                    >> return HdrExpires)
-            <|> (helper "Last-Modified"              >> return HdrLastModified)
-            <|> (helper "Content-Transfer-Encoding"  >> return HdrContentTransferEncoding)
-            <|> (helperParser (many (noneOf " :"))   >>= return . HdrCustom)
+headerNameP =   (helper "Cache-Control"             >>  return HdrCacheControl)
+            <|> (helper "Connection"                >>  return HdrConnection)
+            <|> (helper "Date"                      >>  return HdrDate)
+            <|> (helper "Pragma"                    >>  return HdrPragma)
+            <|> (helper "Transfer-Encoding"         >>  return HdrTransferEncoding)
+            <|> (helper "Upgrade"                   >>  return HdrUpgrade)
+            <|> (helper "Via"                       >>  return HdrVia)
+            <|> (helper "Accept"                    >>  return HdrAccept)
+            <|> (helper "Accept-Charset"            >>  return HdrAcceptCharset)
+            <|> (helper "Accept-Encoding"           >>  return HdrAcceptEncoding)
+            <|> (helper "Accept-Language"           >>  return HdrAcceptLanguage)
+            <|> (helper "Authorization"             >>  return HdrAuthorization)
+            <|> (helper "Cookie"                    >>  return HdrCookie)
+            <|> (helper "Expect"                    >>  return HdrExpect)
+            <|> (helper "From"                      >>  return HdrFrom)
+            <|> (helper "Host"                      >>  return HdrHost)
+            <|> (helper "If-Modified-Since"         >>  return HdrIfModifiedSince)
+            <|> (helper "If-Match"                  >>  return HdrIfMatch)
+            <|> (helper "If-None-Match"             >>  return HdrIfNoneMatch)
+            <|> (helper "If-Range"                  >>  return HdrIfRange)
+            <|> (helper "If-Unmodified-Since"       >>  return HdrIfUnmodifiedSince)
+            <|> (helper "Max-Forwards"              >>  return HdrMaxForwards)
+            <|> (helper "Proxy-Authorization"       >>  return HdrProxyAuthorization)
+            <|> (helper "Range"                     >>  return HdrRange)
+            <|> (helper "Referer"                   >>  return HdrReferer)
+            <|> (helper "User-Agent"                >>  return HdrUserAgent)
+            <|> (helper "Age"                       >>  return HdrAge)
+            <|> (helper "Location"                  >>  return HdrLocation)
+            <|> (helper "Proxy-Authenticate"        >>  return HdrProxyAuthenticate)
+            <|> (helper "Public"                    >>  return HdrPublic)
+            <|> (helper "Retry-After"               >>  return HdrRetryAfter)
+            <|> (helper "Server"                    >>  return HdrServer)
+            <|> (helper "Set-Cookie"                >>  return HdrSetCookie)
+            <|> (helper "TE"                        >>  return HdrTE)
+            <|> (helper "Trailer"                   >>  return HdrTrailer)
+            <|> (helper "Vary"                      >>  return HdrVary)
+            <|> (helper "Warning"                   >>  return HdrWarning)
+            <|> (helper "WWW-Authenticate"          >>  return HdrWWWAuthenticate)
+            <|> (helper "Allow"                     >>  return HdrAllow)
+            <|> (helper "Content-Base"              >>  return HdrContentBase)
+            <|> (helper "Content-Encoding"          >>  return HdrContentEncoding)
+            <|> (helper "Content-Language"          >>  return HdrContentLanguage)
+            <|> (helper "Content-Length"            >>  return HdrContentLength)
+            <|> (helper "Content-Location"          >>  return HdrContentLocation)
+            <|> (helper "Content-MD5"               >>  return HdrContentMD5)
+            <|> (helper "Content-Range"             >>  return HdrContentRange)
+            <|> (helper "Content-Type"              >>  return HdrContentType)
+            <|> (helper "ETag"                      >>  return HdrETag)
+            <|> (helper "Expires"                   >>  return HdrExpires)
+            <|> (helper "Last-Modified"             >>  return HdrLastModified)
+            <|> (helper "Content-Transfer-Encoding" >>  return HdrContentTransferEncoding)
+            <|> (helperParser (many (noneOf " :"))  >>= return . HdrCustom)
     where
         helper header = helperParser (try (string header))
         helperParser parser = parser <* char ':' <* spacesP
+
