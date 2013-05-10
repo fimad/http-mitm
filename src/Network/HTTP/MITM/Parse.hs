@@ -1,17 +1,25 @@
+{-# LANGUAGE OverloadedStrings #-}
 module Network.HTTP.MITM.Parse (
     HttpError
-,   parseRequest
-,   parseResponse
+,   parseRequestPipe
+,   parseResponsePipe
 ) where
 
-import Control.Applicative ((<$>), (<*), (*>), (<*>))
-import Control.Monad
-import Data.Maybe
-import Network.HTTP.Base
-import Network.HTTP.Headers
-import Network.URI
-import Text.Parsec
-import Text.Parsec.String
+import              Control.Applicative ((<$>), (<*), (*>), (<*>), (<|>))
+import              Control.Monad
+import              Control.Proxy
+import              Control.Proxy.Attoparsec
+import              Data.Char
+import              Data.Maybe
+import              Data.Word
+import qualified    Data.ByteString             as BS
+import              Network.HTTP.Base
+import              Network.HTTP.Headers
+import              Network.URI
+--import Data.Attoparsec
+import              Data.Attoparsec.ByteString
+import              Data.Attoparsec.Combinator
+
 
 
 --------------------------------------------------------------------------------
@@ -22,26 +30,62 @@ import Text.Parsec.String
 -- Http Response can easily be created from this to send back to the client.
 type HttpError = String
 
-parseHelper :: Parser a -> String -> Either HttpError a
-parseHelper parser contents = case parse parser "" contents of
-    Left error      ->  Left $! show error
-    Right result    ->  Right result
+--parseHelper :: Parser a -> String -> Either HttpError a
+--parseHelper parser contents = case parse parser "" contents of
+--    Left error      ->  Left $! show error
+--    Right result    ->  Right result
+--
+---- | Parse the header portion of an HTTP 'Request'.
+--parseRequest :: String -> Either HttpError (Request ())
+--parseRequest = parseHelper requestP
 
--- | Parse the header portion of an HTTP 'Request'.
-parseRequest :: String -> Either HttpError (Request ())
-parseRequest = parseHelper requestP
+parseRequestPipe :: (Monad m, Proxy p) => () -> Pipe p BS.ByteString (Request ()) m r
+parseRequestPipe    = parserInputD >-> parserD requestP
+parseResponsePipe :: (Monad m, Proxy p) => () -> Pipe p BS.ByteString (Response ()) m r
+parseResponsePipe   = parserInputD >-> parserD responseP
 
 -- | Parse the header portion of an HTTP 'Response'.
-parseResponse :: String -> Either HttpError (Response ())
-parseResponse = parseHelper responseP
+--parseResponse :: String -> Either HttpError (Response ())
+--parseResponse = parseHelper responseP
 
 
 --------------------------------------------------------------------------------
--- Parsec parser definitions
+-- Make porting from Parsec easier
+--------------------------------------------------------------------------------
+
+char :: Char -> Parser Word8
+char = satisfy . (==) . fromIntegral . ord
+
+char' :: Char -> Parser Char
+char' = fmap (chr . fromIntegral) . char
+
+notChar :: Char -> Parser Word8
+notChar c = satisfy $ not . (==(fromIntegral $ ord c))
+--notChar = satisfy . (curry $ (not . (uncurry $ (==) . fromIntegral . ord)))
+
+notChar' :: Char -> Parser Char
+notChar' = fmap (chr . fromIntegral) .  notChar
+
+anyChar :: Parser Word8
+anyChar = satisfy (return True)
+
+anyChar' :: Parser Char
+anyChar' = fmap (chr . fromIntegral) $ anyChar
+
+digit :: Parser Word8
+digit = satisfy isDigit
+    where isDigit w = w >= 48 && w <= 57
+
+many = many'
+
+--noneOf = 
+
+--------------------------------------------------------------------------------
+-- Attoparsec parser definitions
 --------------------------------------------------------------------------------
 
 newlineP :: Parser ()
-newlineP = void $ try (string "\r\n")
+newlineP = void $ try (char '\r' >> char '\n')
 
 spacesP :: Parser ()
 spacesP = void $ many1 (char ' ')
@@ -79,10 +123,10 @@ statusP =   manyTill anyChar spacesP
         <*  spacesP
     where
         num :: Parser Int
-        num = read . return <$> digit
+        num = read . return . chr . fromIntegral <$> digit
 
 reasonP :: Parser String
-reasonP = manyTill anyChar newlineP
+reasonP = manyTill (chr . fromIntegral<$> anyChar) newlineP
 
 -- | Parse the method, consuming the trailing space
 methodP :: Parser RequestMethod
@@ -94,7 +138,7 @@ methodP =   (helper "HEAD"                  >>  return HEAD)
         <|> (helper "OPTIONS"               >>  return OPTIONS)
         <|> (helper "TRACE"                 >>  return TRACE)
         <|> (helper "CONNECT"               >>  return CONNECT)
-        <|> (many (noneOf " ") <* spacesP   >>= return . Custom)
+        <|> (many (notChar' ' ') <* spacesP   >>= return . Custom)
     where
         helper value = string value <* spacesP
 
@@ -102,7 +146,7 @@ methodP =   (helper "HEAD"                  >>  return HEAD)
 uriP :: Parser URI
 uriP    =   failIfNothing
         =<< parseURIReference
-        <$> many (noneOf " ")
+        <$> many (notChar' ' ')
         <*  spacesP
         <*  manyTill anyChar newlineP -- parse till the end of line
     where
@@ -119,7 +163,7 @@ headerP = mkHeader <$> headerNameP <*> headerValueP
 
 -- | Parse the value of a header, consuming the newline.
 headerValueP :: Parser String
-headerValueP = manyTill anyChar newlineP
+headerValueP = manyTill anyChar' newlineP
 
 -- | Parses a header name, consuming the colon and leading white space
 headerNameP :: Parser HeaderName
@@ -174,7 +218,7 @@ headerNameP =   (helper "Cache-Control"             >>  return HdrCacheControl)
             <|> (helper "Expires"                   >>  return HdrExpires)
             <|> (helper "Last-Modified"             >>  return HdrLastModified)
             <|> (helper "Content-Transfer-Encoding" >>  return HdrContentTransferEncoding)
-            <|> (helperParser (many (noneOf " :"))  >>= return . HdrCustom)
+            <|> (helperParser (many $ fmap (chr . fromIntegral) $ (satisfy $ (&&) <$> (==32) <*> (==58)))  >>= return . HdrCustom)
     where
         helper header = helperParser (try (string header))
         helperParser parser = parser <* char ':' <* spacesP
