@@ -106,6 +106,7 @@ responseP = do
 -- | Parse the request header, ignoring the body.
 requestP :: Parser (Request ())
 requestP = do
+    --let Just uri = parseURI "http://doesnotexist.com"
     method  <-  methodP
     uri     <-  uriP
     headers <-  headersP
@@ -218,7 +219,7 @@ headerNameP =   (helper "Cache-Control"             >>  return HdrCacheControl)
             <|> (helper "Expires"                   >>  return HdrExpires)
             <|> (helper "Last-Modified"             >>  return HdrLastModified)
             <|> (helper "Content-Transfer-Encoding" >>  return HdrContentTransferEncoding)
-            <|> (helperParser (many $ fmap (chr . fromIntegral) $ (satisfy $ (&&) <$> (==32) <*> (==58)))  >>= return . HdrCustom)
+            <|> (helperParser (many $ fmap (chr . fromIntegral) $ (satisfy $ (&&) <$> (/=32) <*> (/=58)))  >>= return . HdrCustom)
     where
         helper header = helperParser (try (string header))
         helperParser parser = parser <* char ':' <* spacesP
