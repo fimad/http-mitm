@@ -1,8 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Network.HTTP.MITM.Parse (
-    HttpError
-,   parseRequestPipe
-,   parseResponsePipe
+    requestD
+,   responseD
+,   parseRequest
+,   parseResponse
 ) where
 
 import              Control.Applicative ((<$>), (<*), (*>), (<*>), (<|>))
@@ -13,11 +14,12 @@ import              Data.Char
 import              Data.Maybe
 import              Data.Word
 import qualified    Data.ByteString             as BS
+import              Network.CGI.Protocol (maybeRead)
 import              Network.HTTP.Base
 import              Network.HTTP.Headers
 import              Network.URI
 --import Data.Attoparsec
-import              Data.Attoparsec.ByteString
+import              Data.Attoparsec.ByteString  as AP
 import              Data.Attoparsec.Combinator
 
 
@@ -26,27 +28,13 @@ import              Data.Attoparsec.Combinator
 -- Exposed API
 --------------------------------------------------------------------------------
 
--- A String that contains the error and the status code. The idea is that an
--- Http Response can easily be created from this to send back to the client.
-type HttpError = String
-
---parseHelper :: Parser a -> String -> Either HttpError a
---parseHelper parser contents = case parse parser "" contents of
---    Left error      ->  Left $! show error
---    Right result    ->  Right result
---
----- | Parse the header portion of an HTTP 'Request'.
---parseRequest :: String -> Either HttpError (Request ())
---parseRequest = parseHelper requestP
-
-parseRequestPipe :: (Monad m, Proxy p) => () -> Pipe p BS.ByteString (Request ()) m r
-parseRequestPipe    = parserInputD >-> parserD requestP
-parseResponsePipe :: (Monad m, Proxy p) => () -> Pipe p BS.ByteString (Response ()) m r
-parseResponsePipe   = parserInputD >-> parserD responseP
-
--- | Parse the header portion of an HTTP 'Response'.
---parseResponse :: String -> Either HttpError (Response ())
---parseResponse = parseHelper responseP
+-- | A `Pipe` that requests `ByteString`s and responds `Request`s.
+requestD :: (Monad m, Proxy p) => () -> Pipe p BS.ByteString (Request BS.ByteString) m r
+requestD    = parserInputD >-> parserD parseRequest
+ 
+-- | A `Pipe` that requests `ByteString`s and responds `Response`s.
+responseD :: (Monad m, Proxy p) => () -> Pipe p BS.ByteString (Response BS.ByteString) m r
+responseD   = parserInputD >-> parserD parseResponse
 
 
 --------------------------------------------------------------------------------
@@ -90,31 +78,32 @@ newlineP = void $ try (char '\r' >> char '\n')
 spacesP :: Parser ()
 spacesP = void $ many1 (char ' ')
 
--- | Parse the request header, ignoring the body.
-responseP :: Parser (Response ())
-responseP = do
+-- | Parse an HTTP request.
+parseResponse :: Parser (Response BS.ByteString)
+parseResponse = do
     status  <-  statusP
     reason  <-  reasonP
     headers <-  headersP
+    body    <-  bodyP headers
     return Response {
         rspCode     =   status
     ,   rspReason   =   reason
     ,   rspHeaders  =   headers
-    ,   rspBody     =   ()
+    ,   rspBody     =   body
     }
 
--- | Parse the request header, ignoring the body.
-requestP :: Parser (Request ())
-requestP = do
-    --let Just uri = parseURI "http://doesnotexist.com"
+-- | Parse an HTTP request.
+parseRequest :: Parser (Request BS.ByteString)
+parseRequest = do
     method  <-  methodP
     uri     <-  uriP
     headers <-  headersP
+    body    <-  bodyP headers
     return Request {
         rqURI       =   uri
     ,   rqMethod    =   method
     ,   rqHeaders   =   headers
-    ,   rqBody      =   ()
+    ,   rqBody      =   body
     }
 
 -- | Skips the http version and returns the status code.
@@ -131,15 +120,15 @@ reasonP = manyTill (chr . fromIntegral<$> anyChar) newlineP
 
 -- | Parse the method, consuming the trailing space
 methodP :: Parser RequestMethod
-methodP =   (helper "HEAD"                  >>  return HEAD)
-        <|> (helper "PUT"                   >>  return PUT )
-        <|> (helper "GET"                   >>  return GET)
-        <|> (helper "POST"                  >>  return POST)
-        <|> (helper "DELETE"                >>  return DELETE)
-        <|> (helper "OPTIONS"               >>  return OPTIONS)
-        <|> (helper "TRACE"                 >>  return TRACE)
-        <|> (helper "CONNECT"               >>  return CONNECT)
-        <|> (many (notChar' ' ') <* spacesP   >>= return . Custom)
+methodP =   (helper "HEAD"                      >>  return HEAD)
+        <|> (helper "PUT"                       >>  return PUT )
+        <|> (helper "GET"                       >>  return GET)
+        <|> (helper "POST"                      >>  return POST)
+        <|> (helper "DELETE"                    >>  return DELETE)
+        <|> (helper "OPTIONS"                   >>  return OPTIONS)
+        <|> (helper "TRACE"                     >>  return TRACE)
+        <|> (helper "CONNECT"                   >>  return CONNECT)
+        <|> (many (notChar' ' ') <* spacesP     >>= return . Custom)
     where
         helper value = string value <* spacesP
 
@@ -223,4 +212,15 @@ headerNameP =   (helper "Cache-Control"             >>  return HdrCacheControl)
     where
         helper header = helperParser (try (string header))
         helperParser parser = parser <* char ':' <* spacesP
+
+bodyP :: [Header] -> Parser BS.ByteString
+bodyP headers   =   fromMaybe (return BS.empty)
+                $   (lookupHeader HdrContentLength headers >>= maybeRead >>= return . parseFixedLength)
+                <|> (lookupHeader HdrTransferEncoding headers >> return parseChunked)
+    where
+        parseFixedLength :: Int -> Parser BS.ByteString
+        parseFixedLength length = AP.take length
+
+        parseChunked :: Parser BS.ByteString
+        parseChunked = return BS.empty
 
