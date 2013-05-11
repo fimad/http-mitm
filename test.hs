@@ -6,6 +6,7 @@ import              Control.Proxy
 import              Control.Proxy.Prelude
 import              Control.Proxy.TCP           as TCP
 import qualified    Data.ByteString             as BS
+import              Data.Char
 import              Data.Maybe
 import              Network.CGI.Protocol (maybeRead)
 import              Network.HTTP.Base
@@ -25,15 +26,26 @@ instance HttpMessage (Request BS.ByteString) where
 instance HttpMessage (Response BS.ByteString) where
     toByteString response = BS.pack (map (fromIntegral . fromEnum) $ show response) `BS.append` rspBody response
 
+response400 :: Response BS.ByteString
+response400 = Response {
+        rspCode     =   (4,0,0)
+    ,   rspReason   =   "No host"
+    ,   rspHeaders  =   []
+    ,   rspBody     =   BS.empty
+    }
+
 main :: IO ()
-main    =   withSocketsDo
+main    =   void
+        $   withSocketsDo
         $   serve (Host "127.0.0.1") "1234" 
-        $   \(socket,_) -> runProxy
+        $   \(socket,_) 
+            ->  runProxy
             $   socketReadS 4096 socket 
             >-> requestD 
-            >-> showRequestD
+            -- >-> showRequestD
             >-> httpProxyD
-            -- >-> mapD toByteString
+            >-> mapD toByteString
+            >-> takeB 1
             >-> socketWriteD socket 
     where
         showRequestD :: (Proxy p) => () -> Pipe p (Request BS.ByteString) (Request BS.ByteString) IO a
@@ -44,29 +56,31 @@ main    =   withSocketsDo
             lift $ putStrLn $ show $ rqBody r
             respond r
 
-        httpProxyD :: (Proxy p) => () -> Pipe p (Request BS.ByteString) BS.ByteString IO a
+        httpProxyD :: (Proxy p) => () -> Pipe p (Request BS.ByteString) (Response BS.ByteString) IO a
         httpProxyD () = runIdentityP $ forever $ do
-            lift $ putStrLn "proxy?"
+            --lift $ putStrLn "proxy?"
             req             <-  request ()
-            lift $ putStrLn "hello?"
+            --lift $ putStrLn "hello?"
             let port        =   getPort "80" $ rqURI req
             response        <-  lift $ case findHeader HdrHost req of
                 Nothing     -> do
-                    putStrLn "uh oh.."
-                    return BS.empty
+                    --putStrLn "uh oh.."
+                    return response400
                 Just host   ->  do
-                                putStr "connecting to "
-                                putStr host
-                                putStr " : "
-                                putStrLn port
-                                connect host port $   \(socket,_) -> do
-                                        putStrLn "mmmminside the connection!"
-                                        send socket $ toByteString req
-                                        putStrLn "inside the connection!"
-                                        runProxy
-                                            $   fmap (>> undefined) (socketReadS 4096 socket)
-                                            -- >-> fmap (>> undefined) responseD
-                                            >-> request
+                    --putStr "connecting to "
+                    --putStr host
+                    --putStr " : "
+                    --putStrLn port
+                    connect host port $ \(socket,_) -> do
+                            putStrLn "mmmminside the connection!"
+                            send socket $ toByteString req
+                            putStrLn "inside the connection!"
+                            runProxy
+                                $   (socketReadS 4096 socket >=> return undefined)
+                                >-> responseD
+                                >-> request
+            --lift $ putStrLn "sending response..."
+            --lift $ putStrLn $ map (chr . fromIntegral) $ BS.unpack $ toByteString $ response
             respond response
 
         -- | Pull a port number from a URI
